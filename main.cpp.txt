@@ -1,0 +1,87 @@
+/**
+ * @file main.cpp
+ * @brief MIL-STD-1553B Military Avionics Bus Intrusion Detection Engine
+ * @author Ayoub Lahmar (@Redayoub-lang)
+ * @version 1.0
+ */
+
+#include 
+#include 
+#include 
+#include 
+
+enum WordType { COMMAND_WORD, DATA_WORD, STATUS_WORD, INVALID_WORD };
+
+struct BusWord1553 {
+    uint16_t raw_data;
+    bool sync_valid;
+    bool parity_error;
+    WordType type;
+};
+
+class AvionicsBusIDS {
+private:
+    uint8_t expected_terminal_address;
+    uint32_t total_frames_inspected;
+    uint32_t anomalies_detected;
+
+public:
+    AvionicsBusIDS(uint8_t valid_ta)
+        : expected_terminal_address(valid_ta), total_frames_inspected(0), anomalies_detected(0) {}
+
+    bool inspect_word(const BusWord1553& word) {
+        total_frames_inspected++;
+
+        // Rule 1: Sync pulse timing integrity
+        if (!word.sync_valid) {
+            anomalies_detected++;
+            return false;
+        }
+
+        // Rule 2: Hardware Parity Bit Check
+        if (word.parity_error) {
+            anomalies_detected++;
+            return false;
+        }
+
+        // Rule 3: Command Word Terminal Address (TA) Spoofing Check
+        if (word.type == COMMAND_WORD) {
+            uint8_t target_ta = (word.raw_data >> 11) & 0x1F; // Extract 5-bit TA
+            if (target_ta != expected_terminal_address) {
+                anomalies_detected++;
+                return false; // Spoofed Bus Controller Command
+            }
+        }
+
+        return true;
+    }
+
+    uint32_t getAnomalies() const { return anomalies_detected; }
+};
+
+int main() {
+    std::cout << "=========================================================\n";
+    std::cout << "   MIL-STD-1553B AVIONICS BUS SECURITY ENGINE (C++17)    \n";
+    std::cout << "   Developer: Ayoub Lahmar (@Redayoub-lang)              \n";
+    std::cout << "=========================================================\n\n";
+
+    AvionicsBusIDS bus_ids(0x05); // Monitor Remote Terminal Address 0x05
+
+    // Simulated 1553B Bus Frame Sequence
+    std::vector bus_stream = {
+        {0x2A00, true, false, COMMAND_WORD}, // Valid Command to TA 0x05
+        {0xABCD, true, false, DATA_WORD},    // Valid Data Word
+        {0x7800, true, false, COMMAND_WORD}, // SPOOFED Command to TA 0x0F
+        {0x1234, false, false, DATA_WORD}    // CORRUPTED Sync Pulse
+    };
+
+    for (size_t i = 0; i < bus_stream.size(); ++i) {
+        bool status = bus_ids.inspect_word(bus_stream[i]);
+        std::cout << "Frame " << i + 1 << " | Inspection Result: " 
+                  << (status ? "[PASSED - CLEAN]" : "[ALERT - MALICIOUS / CORRUPTED]") << "\n";
+    }
+
+    std::cout << "\n[SECURITY SUMMARY] Total Anomalies Intercepted: " << bus_ids.getAnomalies() << "\n";
+
+    return 0;
+}
